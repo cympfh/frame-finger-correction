@@ -16,6 +16,11 @@ int main(){
  for(auto& f:old.fingers)assert(f.selected&&!f.dynamic);
  assert(old.fingers[0].threshold==0&&old.fingers[1].threshold==0&&near(old.fingers[2].threshold,.15));
  assert(near(old.fingers[3].threshold,.2)&&near(old.fingers[3].high,.5));
+ // Slider offers up to 2.0, but a saved 3.0 is never rewritten by loading.
+ Profile big;big.fingers[7]={true,false,0};big.fingers[7].high=3.0;
+ frame_range::migrate(big);assert(near(big.fingers[7].high,3.0));
+ assert(near(frame_range::forDriver(big,3.0).fingers[7].high,3.0));
+ assert(frame_range::uiHighMax==2.0);
  assert(old.fingers[4].threshold==0); // default (unselected) finger
  // Defaults: a fresh profile becomes 0 / 1 for every finger (exact passthrough).
  Profile fresh;frame_range::migrate(fresh);

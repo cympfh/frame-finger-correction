@@ -2,7 +2,9 @@
 // Simplified settings model (v0.4): every finger is always corrected while the
 // settings app runs, with two marks per finger:
 //   0 mark (low)  0.0 .. 0.9, default 0
-//   1 mark (high) 0.1 .. 3.0, default 1   (at least 0.05 above the 0 mark)
+//   1 mark (high) 0.1 .. 2.0, default 1   (at least 0.05 above the 0 mark)
+// The driver accepts 1 marks up to 3.0; the app's slider offers 0..2 only.
+// A saved value above 2 is kept untouched until the user moves that mark.
 // Defaults 0 / 1 are an exact passthrough. The marks are written in the v1
 // profile + range files that every range-capable driver already reads.
 #include "finger-deadzone.hpp"
@@ -10,7 +12,7 @@
 #include <algorithm>
 #include <cmath>
 namespace frame_range {
-inline constexpr double lowMax=.9;
+inline constexpr double lowMax=.9,uiHighMax=2.0;
 inline double clampLow(double low,double high){
     if(!std::isfinite(low))low=0;
     return std::clamp(low,0.0,std::max(0.0,std::min(lowMax,high-frame_correction::rangeMinGap)));
@@ -29,7 +31,7 @@ inline void migrate(frame_settings::Profile& profile){
         double high=frame_correction::validHigh(finger.high)?finger.high:1.0;
         finger.selected=true;finger.dynamic=false;
         finger.threshold=clampLow(low,high);
-        finger.high=clampHigh(high,finger.threshold,frame_correction::rangeHighMax);
+        finger.high=clampHigh(high,finger.threshold,frame_correction::rangeHighMax); // saved values are kept (up to 3.0)
     }
 }
 // What the running driver gets. Values above what it accepts are clamped so a

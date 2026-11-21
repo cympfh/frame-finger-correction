@@ -76,7 +76,7 @@ std::string readSmall(const std::string& path,size_t limit){
 }
 struct Button {double x,y,w,h;int action;};
 struct Slider {double x,y,w,h;unsigned row;};
-constexpr double sliderMax=frame_correction::rangeHighMax,sliderWidth=540;
+constexpr double sliderMax=frame_range::uiHighMax,sliderWidth=540;
 double sliderValue(const Slider& slider,double x){
     double value=(x-slider.x)/slider.w*sliderMax;
     return std::round(std::clamp(value,0.0,sliderMax)*100)/100;
@@ -144,7 +144,13 @@ int main(int argc,char** argv){
     if(std::filesystem::exists(path)&&!frame_settings::loadFile(path,profile))std::cerr<<"Invalid saved profile; defaults used\n";
     if(!frame_settings::loadRangeFile(directory+"/range-preferences.txt",profile))std::cerr<<"Invalid range file; 1 marks reset\n";
     frame_range::migrate(profile);
-    double driverMax=frame_correction::rangeHighMaxLegacy; // until the driver reports more
+    // What the loaded driver accepts. A v2 status (any age) means a 3.0 driver, so
+    // stored values are passed on unchanged from the first write.
+    double driverMax=frame_correction::rangeHighMaxLegacy;
+    {
+        auto body=readSmall(directory+"/range-status.txt",256);std::istringstream in(body);std::string tag;int64_t stamp=-1;
+        if(in>>tag>>stamp&&stamp>=0){auto st=frame_beta::parseRangeStatus(body,stamp);if(st.valid)driverMax=st.maxHigh;}
+    }
     auto saveLive=[&](){
         auto live=frame_range::forDriver(profile,driverMax);
         bool a=frame_settings::saveFile(directory+"/beta-live-profile.txt",live);
@@ -156,8 +162,7 @@ int main(int argc,char** argv){
         bool b=frame_settings::saveRangeFile(directory+"/range-preferences.txt",profile);
         return a&&b;
     };
-    if(!saveLive())return 2;
-    savePreferences();
+    if(!saveLive())return 2; // preferences are written only when the user changes a mark
     {std::ifstream language(directory+"/language.txt");std::string saved;language>>saved;japanese=saved!="en";}
 
     vk_overlay::Texture gpu; // destroyed after the overlay (declared before Cleanup)
@@ -215,7 +220,8 @@ int main(int argc,char** argv){
     auto changed=[&](bool low){if(low)++profileRevision;liveDirty=prefsDirty=dirty=true;};
     auto apply=[&](unsigned row,bool high,double value){
         auto& finger=profile.fingers[row];const double low0=finger.threshold,high0=finger.high;
-        if(high)frame_range::setHigh(finger,value,frame_correction::rangeHighMax);else frame_range::setLow(finger,value);
+        if(high&&value>=finger.high&&finger.high>=frame_range::uiHighMax)return; // saved >2: "1+" never lowers it
+        if(high)frame_range::setHigh(finger,value,frame_range::uiHighMax);else frame_range::setLow(finger,value);
         if(finger.threshold!=low0||finger.high!=high0)changed(finger.threshold!=low0);
     };
     const char* fingerEn[]{"Index","Middle","Ring","Pinky"};
@@ -232,8 +238,10 @@ int main(int argc,char** argv){
             if(issue!="RESTART_REQUIRED"&&issue!="START_FAILED"&&issue!="UPDATE_REQUIRED")issue.clear();
             if(issue!=startupIssue){startupIssue=issue;dirty=true;}
             auto range=frame_beta::parseRangeStatus(readSmall(directory+"/range-status.txt",256),wall);
-            double reported=range.valid?range.maxHigh:frame_correction::rangeHighMaxLegacy;
-            if(range.valid!=rangeDriver||reported!=driverMax){rangeDriver=range.valid;driverMax=reported;liveDirty=dirty=true;}
+            // Only an explicit status changes the limit; a missing/stale one keeps it,
+            // so stored values are never rewritten just because a status is late.
+            if(range.valid!=rangeDriver){rangeDriver=range.valid;dirty=true;}
+            if(range.valid&&range.maxHigh!=driverMax){driverMax=range.maxHigh;liveDirty=dirty=true;}
             auto latest=frame_beta::parseUiStatus(readSmall(directory+"/beta-status.txt",512),wall);
             if(latest.valid!=betaStatus.valid||latest.on!=betaStatus.on){betaStatus=latest;dirty=true;}
 #ifdef FRAME_COMPAT_OBSERVATION_UI
@@ -338,9 +346,9 @@ int main(int argc,char** argv){
                     cairo_set_source_rgb(cr,.30,.34,.40);cairo_move_to(cr,lx,ly);cairo_line_to(cr,lx+lw,ly);cairo_stroke(cr);
                     cairo_set_source_rgb(cr,.75,.80,.88);cairo_move_to(cr,lx,ly);cairo_line_to(cr,lx+lw/sliderMax,ly);cairo_stroke(cr);
                     cairo_set_line_width(cr,2);
-                    for(int tick=0;tick<=3;++tick){const double tx=lx+lw*tick/sliderMax;cairo_set_source_rgb(cr,.75,.80,.88);
+                    for(int tick=0;tick<=int(sliderMax);++tick){const double tx=lx+lw*tick/sliderMax;cairo_set_source_rgb(cr,.75,.80,.88);
                         cairo_move_to(cr,tx,ly-8);cairo_line_to(cr,tx,ly+8);cairo_stroke(cr);text(cr,tx-4,ly+25,13,std::to_string(tick),.6,.65,.72);}
-                    const double a=lx+lw*entry.threshold/sliderMax,b=lx+lw*entry.high/sliderMax;
+                    const double a=lx+lw*entry.threshold/sliderMax,b=lx+lw*std::min(entry.high,sliderMax)/sliderMax; // >2 saved: drawn at the end, value kept
                     cairo_set_source_rgba(cr,.25,.65,1,.35);cairo_rectangle(cr,a,ly-5,b-a,10);cairo_fill(cr);
                     auto mark=[&](double mx,double r,double g,double bl,const char* label){
                         cairo_set_source_rgb(cr,r,g,bl);cairo_move_to(cr,mx,ly-4);cairo_line_to(cr,mx-10,ly-22);cairo_line_to(cr,mx+10,ly-22);cairo_close_path(cr);cairo_fill(cr);
@@ -370,9 +378,9 @@ int main(int argc,char** argv){
             else if(betaStatus.on){status=tr("Correction: ON","補正中");sr=.45;sg=.9;sb=.55;}
             else status=tr("Correction: starting","補正を準備中");
             text(cr,25,775,22,status,sr,sg,sb);
-            if(driverMax<frame_correction::rangeHighMax)
+            if(driverMax<frame_range::uiHighMax)
                 text(cr,25,805,16,tr("This driver accepts 1 marks up to ","今のドライバーでは1の印は")+fixed2(driverMax)+
-                     tr(". Up to 3.00 after the next SteamVR restart.","まで有効。3.00までは次にSteamVRを再起動した後に有効"),.75,.80,.88);
+                     tr(".","まで有効"),.75,.80,.88);
             button(25,825,380,52,105,autoLaunch?tr("SteamVR auto-start: ON","SteamVR 自動起動：オン"):tr("SteamVR auto-start: OFF","SteamVR 自動起動：オフ"));
             button(425,825,360,52,106,"言語 / Language：日本語 / English");
             button(805,825,370,52,102,tr("Close (stops correction)","閉じる（補正も止まります）"));
