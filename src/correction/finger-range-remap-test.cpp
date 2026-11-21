@@ -25,7 +25,11 @@ int main(){
  assert(near(remapRange(.3,.39,.4),(.3-.35)/.05<0?0:(.3-.35)/.05));assert(near(remapRange(.375,.39,.4),.5));
  // Invalid new 1 or non-finite input: passthrough, never NaN from the mark math.
  auto nan=std::numeric_limits<double>::quiet_NaN();
- assert(near(remapRange(.3,0,.05),.3));assert(near(remapRange(.3,0,2.5),.3));assert(near(remapRange(.3,0,nan),.3));
+ assert(near(remapRange(.3,0,.05),.3));assert(near(remapRange(.3,0,3.5),.3));
+ assert(near(remapRange(1,0,3.),1./3));assert(near(remapRange(.75,0,2.5),.3));
+ // Default marks are an exact passthrough.
+ for(double v:{0.,.123456789,.5,.999,1.})assert(remapRange(v,0,1)==v);
+ assert(near(remapRange(.3,0,nan),.3));
  assert(std::isnan(remapRange(nan,0,.4)));
 
  // FingerDeadzone: default high=1 keeps the original deadzone formula.
@@ -52,7 +56,7 @@ int main(){
  assert(frame_settings::serialize(profile)==frame_settings::serialize(plain));
  // Invalid range text never replaces state.
  for(std::string bad:{std::string("FRAME_FINGER_RANGE_1\n0 0 1\n"),"FRAME_FINGER_RANGE_2\n"+text.substr(21),
-     text+"extra\n",std::string("FRAME_FINGER_RANGE_1\n")+"0 0 2.5\n0 1 1\n0 2 1\n0 3 1\n1 0 1\n1 1 1\n1 2 1\n1 3 1\n",
+     text+"extra\n",std::string("FRAME_FINGER_RANGE_1\n")+"0 0 3.5\n0 1 1\n0 2 1\n0 3 1\n1 0 1\n1 1 1\n1 2 1\n1 3 1\n",
      std::string("FRAME_FINGER_RANGE_1\n")+"0 0 nan\n0 1 1\n0 2 1\n0 3 1\n1 0 1\n1 1 1\n1 2 1\n1 3 1\n"}){
   frame_settings::Profile keep;keep.fingers[0].high=.7;
   assert(!frame_settings::parseRange(bad,keep));assert(near(keep.fingers[0].high,.7));

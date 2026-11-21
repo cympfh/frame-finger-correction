@@ -6,11 +6,13 @@ namespace frame_correction {
 // Two-mark range remap. `low` is the "new 0" (the deadzone), `high` is the
 // "new 1". Inputs between the marks are stretched to 0..1, so high<1 makes a
 // weak bend read as fully closed (e.g. high=0.4: a 40% bend is a full curl).
-// high may be set up to 2.0; then even a full bend stays below 1. The raw
+// high may be set up to 3.0; then even a full bend stays below 1. The raw
 // math can exceed 1, but the written value is always clamped to 0..1 because
 // SteamVR finger scalars are normalized one-sided values and a value above 1
 // is not verified to be accepted by SteamVR or applications.
-inline constexpr double rangeMinGap=0.05,rangeHighMin=0.1,rangeHighMax=2.0;
+inline constexpr double rangeMinGap=0.05,rangeHighMin=0.1,rangeHighMax=3.0;
+// Drivers built before the 3.0 limit reject a range file containing values above 2.0.
+inline constexpr double rangeHighMaxLegacy=2.0;
 inline bool validHigh(double high){return std::isfinite(high)&&high>=rangeHighMin&&high<=rangeHighMax;}
 // Unclamped two-mark math (can exceed 1 above high). Requires high>low.
 inline double remapRangeRaw(double input,double low,double high){return (input-low)/(high-low);}
@@ -20,6 +22,7 @@ inline double remapRangeRaw(double input,double low,double high){return (input-l
 inline double effectiveLow(double low,double high){return std::clamp(low,0.0,high-rangeMinGap);}
 inline double remapRange(double input,double low,double high){
     if(!std::isfinite(input)||!std::isfinite(low)||!validHigh(high))return input;
+    if(low<=0&&high==1)return std::clamp(input,0.0,1.0); // default marks: exact passthrough
     low=effectiveLow(low,high);
     return std::clamp(remapRangeRaw(input,low,high),0.0,1.0);
 }

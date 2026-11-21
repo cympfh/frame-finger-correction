@@ -158,9 +158,8 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
         writeBetaStatus(text.str());
         // Tells the settings UI that this driver applies the "new 1" marks.
         {
-            std::ostringstream range;range<<"FRAME_RANGE_STATUS_1 "<<time(nullptr)<<std::fixed<<std::setprecision(4);
-            for(double low:state.low)if(low<0)range<<" -1";else range<<' '<<low;
-            range<<'\n';writeBetaStatus(range.str(),"settings-ui/range-status.txt");
+            std::ostringstream range;range<<"FRAME_RANGE_STATUS_2 "<<time(nullptr)<<' '<<std::setprecision(3)<<frame_correction::rangeHighMax<<'\n';
+            writeBetaStatus(range.str(),"settings-ui/range-status.txt");
         }
 #if defined(FRAME_COMPAT_OBSERVATION_UI) && defined(FRAME_SCALAR_OFF_VTABLE_PROBE)
         if(offProbe.restartRequired())writeBetaStatus("FRAME_COMPAT_STATUS_1 "+std::to_string(time(nullptr))+
@@ -395,6 +394,7 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
     std::array<std::string,8> experimentalOwners{};
     uintptr_t experimentalTable=0, experimentalEntry=0, experimentalBackend=0;
     uint64_t experimentalUi=0;
+    unsigned reattachBudget=100;
 #endif
     void structuralCensus(frame_compat_check::Facts& f
 #ifdef FRAME_COMPAT_OBSERVATION_UI
@@ -524,6 +524,17 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
             if(logger)logger->Log(("FrameCompat: "+structuralStatus).c_str());
             std::lock_guard<std::mutex> guard(frame_off_probe::observationMutex);
             frame_off_probe::observation.restored(!offProbe.restartRequired(),false);
+            // The settings app applies correction only while it runs. After a confirmed
+            // restore (app closed, session ended) a later app session may attach again;
+            // it repeats every structural check. Unconfirmed restores and value/receiver
+            // anomalies still need a SteamVR restart.
+            if(!offProbe.restartRequired()&&frame_off_probe::observation.state()!=frame_observation::State::RestartRequired&&
+               reattachBudget>0&&(reason==Reason::None||reason==Reason::SessionLost||reason==Reason::Timeout||reason==Reason::IdentityChanged)){
+                --reattachBudget;
+                frame_off_probe::observation=frame_observation::Trial{};
+                structuralStatus="structurally_compatible none";
+                if(logger)logger->Log("FrameCompat: slot restored; a new settings session may attach again");
+            }
         }else{
             auto tick=frame_off_probe::observationMs();
             frame_off_probe::allFingers.configure(bindings,tick);

@@ -17,7 +17,7 @@ if [ "${FRAME_COMPAT_OBSERVATION_UI:-0}" = 1 ]; then
 fi
 g++ $release_flag $compat_ui_flag -std=c++17 -O2 -Wall -Wextra -Werror -pthread -DFRAME_UI_ALL_FINGERS_BETA \
   -I"$headers" src/diagnostics/frame-finger-settings-overlay.cpp \
-  $(pkg-config --cflags --libs cairo) -L"$sdk/bin/linuxarm64" -lopenvr_api \
+  $(pkg-config --cflags --libs cairo) -lvulkan -L"$sdk/bin/linuxarm64" -lopenvr_api \
   -o "$out/frame-finger-settings-beta"
 runtime_flag=
 if [ "${FRAME_FINGER_RUNTIME:-legacy}" = november-beta ]; then

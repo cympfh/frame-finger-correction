@@ -36,7 +36,7 @@ int main(){
  for(uint64_t t=1111;t<1114;++t)bank.forward(original,receiver,right,.1f,0,t);
  assert(bank.renew(profile,3,true,1116,1116,1116,7,1116));
  auto learned=bank.takeLearningResult();assert(learned&&learned->applied);
- auto st=bank.status(1116);assert(st.learned&(1u<<7));assert(std::abs(st.low[7]-.12)<1e-6);assert(st.low[3]==-1);
+ auto st=bank.status(1116);assert(st.learned&(1u<<7));
  bank.forward(original,receiver,right,.56f,0,1117);assert(std::abs(received-(.56f-.12f)/(1-.12f))<1e-6);
  profile.fingers[7].high=.5;assert(bank.renew(profile,3,true,1120,1120,1120));
  assert(bank.status(1120).learned&(1u<<7));
@@ -45,10 +45,14 @@ int main(){
  assert(bank.renew(profile,4,true,1130,1130,1130));
  bank.forward(original,receiver,right,.31f,0,1131);assert(received==.31f);assert(!(bank.status(1131).learned&(1u<<7)));
  // Range status line written by the driver and read by the UI.
+ // v1 (driver 29b36bc): 1 marks up to 2.0. v2: the driver states its maximum.
  auto parsed=frame_beta::parseRangeStatus("FRAME_RANGE_STATUS_1 100 -1 -1 -1 0.1200 -1 -1 -1 -1\n",101);
- assert(parsed.valid&&std::abs(parsed.low[3]-.12)<1e-9&&parsed.low[0]==-1);
+ assert(parsed.valid&&parsed.maxHigh==2.0);
  assert(!frame_beta::parseRangeStatus("FRAME_RANGE_STATUS_1 100 -1 -1 -1 0.12 -1 -1 -1 -1\n",104).valid); // stale
- assert(!frame_beta::parseRangeStatus("FRAME_RANGE_STATUS_1 100 -1 -1 -1 1.5 -1 -1 -1 -1\n",101).valid);
+ auto v2=frame_beta::parseRangeStatus("FRAME_RANGE_STATUS_2 100 3\n",100);assert(v2.valid&&v2.maxHigh==3.0);
+ assert(!frame_beta::parseRangeStatus("FRAME_RANGE_STATUS_2 100 3.5\n",100).valid);
+ assert(!frame_beta::parseRangeStatus("FRAME_RANGE_STATUS_2 100 3 x\n",100).valid);
+ assert(!frame_beta::parseRangeStatus("FRAME_RANGE_STATUS_2 100\n",100).valid);
  assert(!frame_beta::parseRangeStatus("FRAME_RANGE_STATUS_1 100 -1 -1 -1 -1 -1 -1 -1\n",101).valid);
  assert(!frame_beta::parseRangeStatus("FRAME_RANGE_STATUS_1 100 -1 -1 -1 -1 -1 -1 -1 -1 x\n",101).valid);
  std::cout<<"PASS: per-finger mark 0 / mark 1 through FingerBank::forward, clamp, unselected and OFF bypass, mark 1 change keeps learned value, range status\n";
