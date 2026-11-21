@@ -119,6 +119,13 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
         if(!uiFresh||!pcOffFresh||!frame_settings::parse(text,profile))
 #endif
         {frame_off_probe::allFingers.off();return;}
+        // Optional "new 1" marks. Missing or invalid -> every mark stays 1.0,
+        // which is exactly the original deadzone mapping.
+        {
+            auto range=readBetaFile("beta-live-range.txt",4096);
+            frame_settings::Profile ranged=profile;
+            if(!range.empty()&&frame_settings::parseRange(range,ranged))profile=ranged;
+        }
         auto learn=readBetaFile("beta-learn.txt",160);std::istringstream input(learn);
         std::string tag,id,extra;int64_t stamp=0;int row=-1;auto wall=time(nullptr);
         if((input>>tag>>stamp>>id>>row)&&!(input>>extra)&&tag=="FRAME_BETA_LEARN_1"&&stamp>=0&&stamp<=wall&&wall-stamp<=2&&id.size()==16&&row>=0&&row<8&&id!=betaLearnId){
@@ -148,6 +155,8 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
         auto state=frame_off_probe::allFingers.status(now);
         std::ostringstream text;text<<"FRAME_BETA_STATUS_1 "<<time(nullptr)<<' '<<(state.on?"ON":"OFF")<<' '<<state.present<<' '<<state.witnessed<<' '<<state.learned<<'\n';
         writeBetaStatus(text.str());
+        // Tells the settings UI that this driver applies the "new 1" marks.
+        writeBetaStatus("FRAME_RANGE_STATUS_1 "+std::to_string(time(nullptr))+"\n","settings-ui/range-status.txt");
 #if defined(FRAME_COMPAT_OBSERVATION_UI) && defined(FRAME_SCALAR_OFF_VTABLE_PROBE)
         if(offProbe.restartRequired())writeBetaStatus("FRAME_COMPAT_STATUS_1 "+std::to_string(time(nullptr))+
             " restore_failed restart_required\n","settings-ui/compat-status.txt");
