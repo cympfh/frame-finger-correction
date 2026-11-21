@@ -46,5 +46,19 @@ int main(){
  assert(near(full.fingers[7].threshold,.9)&&near(full.fingers[7].high,.95));
  // The stored preference keeps 2.6 even when the driver only takes 2.0.
  assert(near(p.fingers[3].high,2.6));
- std::cout<<"PASS: v0.4 settings model: migration, 0/1 passthrough, mark limits, legacy-driver clamp\n";
+ // 0.1 grid in the app.
+ assert(near(frame_range::stepFrom(.38,1),.4)&&near(frame_range::stepFrom(.38,-1),.3));
+ assert(near(frame_range::stepFrom(.4,1),.5)&&near(frame_range::stepFrom(.4,-1),.3));
+ assert(near(frame_range::stepFrom(1.0,1),1.1)&&near(frame_range::stepFrom(.3,-1),.2));
+ frame_settings::Finger g;g.threshold=.38;g.high=.62;           // stored off-grid values
+ frame_settings::Finger untouched=g;
+ frame_range::setHighUi(g,.47,2.0);assert(near(g.high,.5)&&near(g.threshold,.38)); // only the moved mark changes
+ frame_range::setHighUi(g,.1,2.0);assert(near(g.high,.5));      // >= 0 mark + gap, rounded up to grid
+ frame_range::setLowUi(g,.6);assert(near(g.threshold,.4)); // below 1 mark - gap, rounded down
+ frame_range::setHighUi(g,2.3,2.0);assert(near(g.high,2.0));
+ frame_range::setLowUi(g,-.2);assert(g.threshold==0);
+ assert(near(untouched.threshold,.38)&&near(untouched.high,.62));
+ Profile stored;stored.fingers[3].selected=true;stored.fingers[3].threshold=.38;stored.fingers[3].high=.62;
+ frame_range::migrate(stored);assert(near(stored.fingers[3].threshold,.38)&&near(stored.fingers[3].high,.62)); // load keeps them
+ std::cout<<"PASS: v0.4 settings model: migration, 0/1 passthrough, mark limits, legacy-driver clamp, 0.1 UI grid\n";
 }

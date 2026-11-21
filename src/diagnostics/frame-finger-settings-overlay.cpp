@@ -79,12 +79,13 @@ struct Slider {double x,y,w,h;unsigned row;};
 constexpr double sliderMax=frame_range::uiHighMax,sliderWidth=540;
 double sliderValue(const Slider& slider,double x){
     double value=(x-slider.x)/slider.w*sliderMax;
-    return std::round(std::clamp(value,0.0,sliderMax)*100)/100;
+    return frame_range::snap(std::clamp(value,0.0,sliderMax)); // 0.1 steps
 }
 void text(cairo_t* cr,double x,double y,double size,const std::string& label,double r=.94,double g=.96,double b=1){
     cairo_set_source_rgb(cr,r,g,b);cairo_set_font_size(cr,size);cairo_move_to(cr,x,y);cairo_show_text(cr,label.c_str());
 }
 std::string fixed2(double value){std::ostringstream out;out<<std::fixed<<std::setprecision(2)<<value;return out.str();}
+std::string fixed1(double value){std::ostringstream out;out<<std::fixed<<std::setprecision(1)<<value;return out.str();}
 }
 
 int main(int argc,char** argv){
@@ -221,7 +222,7 @@ int main(int argc,char** argv){
     auto apply=[&](unsigned row,bool high,double value){
         auto& finger=profile.fingers[row];const double low0=finger.threshold,high0=finger.high;
         if(high&&value>=finger.high&&finger.high>=frame_range::uiHighMax)return; // saved >2: "1+" never lowers it
-        if(high)frame_range::setHigh(finger,value,frame_range::uiHighMax);else frame_range::setLow(finger,value);
+        if(high)frame_range::setHighUi(finger,value,frame_range::uiHighMax);else frame_range::setLowUi(finger,value);
         if(finger.threshold!=low0||finger.high!=high0)changed(finger.threshold!=low0);
     };
     const char* fingerEn[]{"Index","Middle","Ring","Pinky"};
@@ -300,8 +301,8 @@ int main(int argc,char** argv){
                 if(action>=300&&action<332){
                     const unsigned row=static_cast<unsigned>(action-300)/4,kind=static_cast<unsigned>(action-300)%4;
                     const auto& finger=profile.fingers[row];
-                    if(kind<2)apply(row,false,finger.threshold+(kind?.01:-.01));
-                    else apply(row,true,finger.high+(kind==3?.05:-.05));
+                    if(kind<2)apply(row,false,frame_range::stepFrom(finger.threshold,kind?1:-1));
+                    else apply(row,true,frame_range::stepFrom(finger.high,kind==3?1:-1));
                     break;
                 }
             }
@@ -335,7 +336,7 @@ int main(int argc,char** argv){
                     const unsigned row=side*4+f;const auto& entry=profile.fingers[row];const double y=145+f*150;
                     const bool limited=entry.high>driverMax+1e-9;
                     text(cr,x,y+26,21,japanese?fingerJa[f]:fingerEn[f]);
-                    text(cr,x+110,y+26,18,tr("0 mark ","0の印 ")+fixed2(entry.threshold)+"   "+tr("1 mark ","1の印 ")+fixed2(entry.high)+
+                    text(cr,x+110,y+26,18,tr("0 mark ","0の印 ")+fixed1(entry.threshold)+"   "+tr("1 mark ","1の印 ")+fixed1(entry.high)+
                          (limited?tr(" (now max ",  "（今は")+fixed2(driverMax)+tr(")","まで）"):""),.85,.88,.95);
                     const int base=300+static_cast<int>(row)*4;
                     button(x+    0,y+38,60,40,base+0,"0 −");button(x+ 66,y+38,60,40,base+1,"0 +");
@@ -346,8 +347,16 @@ int main(int argc,char** argv){
                     cairo_set_source_rgb(cr,.30,.34,.40);cairo_move_to(cr,lx,ly);cairo_line_to(cr,lx+lw,ly);cairo_stroke(cr);
                     cairo_set_source_rgb(cr,.75,.80,.88);cairo_move_to(cr,lx,ly);cairo_line_to(cr,lx+lw/sliderMax,ly);cairo_stroke(cr);
                     cairo_set_line_width(cr,2);
-                    for(int tick=0;tick<=int(sliderMax);++tick){const double tx=lx+lw*tick/sliderMax;cairo_set_source_rgb(cr,.75,.80,.88);
-                        cairo_move_to(cr,tx,ly-8);cairo_line_to(cr,tx,ly+8);cairo_stroke(cr);text(cr,tx-4,ly+25,13,std::to_string(tick),.6,.65,.72);}
+                    // Ticks every 0.1; longer at 0.5, labelled at whole numbers and halves.
+                    for(int tick=0;tick<=int(std::lround(sliderMax*10));++tick){
+                        const double tx=lx+lw*tick/(sliderMax*10);const bool whole=tick%10==0,half=tick%5==0;
+                        const double h=whole?9:half?7:4;
+                        cairo_set_line_width(cr,whole?2:1);cairo_set_source_rgb(cr,.75,.80,.88);
+                        cairo_move_to(cr,tx,ly-h);cairo_line_to(cr,tx,ly+h);cairo_stroke(cr);
+                        if(whole)text(cr,tx-4,ly+25,13,std::to_string(tick/10),.6,.65,.72);
+                        else if(half)text(cr,tx-9,ly+25,11,fixed1(tick/10.0),.5,.55,.62);
+                    }
+                    cairo_set_line_width(cr,2);
                     const double a=lx+lw*entry.threshold/sliderMax,b=lx+lw*std::min(entry.high,sliderMax)/sliderMax; // >2 saved: drawn at the end, value kept
                     cairo_set_source_rgba(cr,.25,.65,1,.35);cairo_rectangle(cr,a,ly-5,b-a,10);cairo_fill(cr);
                     auto mark=[&](double mx,double r,double g,double bl,const char* label){

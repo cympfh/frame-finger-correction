@@ -47,4 +47,21 @@ inline frame_settings::Profile forDriver(const frame_settings::Profile& stored,d
 }
 inline void setLow(frame_settings::Finger& finger,double value){finger.threshold=clampLow(value,finger.high);}
 inline void setHigh(frame_settings::Finger& finger,double value,double maxHigh){finger.high=clampHigh(value,finger.threshold,maxHigh);}
+// Settings app UI: marks move on a 0.1 grid. Only a mark the user moves is
+// changed; stored off-grid values (e.g. 0.38) stay as they are until then.
+inline constexpr double uiStep=.1;
+inline double snap(double v){return std::round(v*10)/10;}
+inline double snapDown(double v){return std::floor(v*10+1e-6)/10;}
+inline double snapUp(double v){return std::ceil(v*10-1e-6)/10;}
+inline bool onGrid(double v){return std::abs(v*10-std::round(v*10))<1e-6;}
+// One button step: to the next grid value in that direction (0.38 -> 0.4 / 0.3).
+inline double stepFrom(double v,int direction){return direction>0?snapDown(v)+uiStep:snapUp(v)-uiStep;}
+inline void setLowUi(frame_settings::Finger& finger,double value){
+    setLow(finger,snap(value));
+    if(!onGrid(finger.threshold))finger.threshold=snapDown(finger.threshold);
+}
+inline void setHighUi(frame_settings::Finger& finger,double value,double maxHigh){
+    setHigh(finger,snap(value),maxHigh);
+    if(!onGrid(finger.high))finger.high=std::min(snapUp(finger.high),snapDown(maxHigh));
+}
 }
