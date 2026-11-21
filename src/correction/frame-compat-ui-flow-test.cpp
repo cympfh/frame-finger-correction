@@ -23,4 +23,19 @@ int main(){
     off.failed();
     assert(off.next("verified",true)==Command::None);
     assert(off.next("structurally_compatible",true)==Command::None);
+    // Re-arm after the driver restored the slot and offers attaching again.
+    frame_compat_ui::Flow again;
+    assert(again.next("structurally_compatible",true)==Command::Observe);
+    assert(again.next("observing",true)==Command::None);
+    assert(again.next("verified",true)==Command::Activate);
+    assert(again.next("active",true)==Command::None);
+    assert(again.next("structurally_compatible",true)==Command::Observe);
+    assert(again.next("structurally_compatible",true)==Command::None);
+    assert(again.next("verified",true)==Command::Activate);
+    for(unsigned i=1;i<frame_compat_ui::Flow::maxRearms;++i){
+        assert(again.next("active",true)==Command::None);
+        assert(again.next("structurally_compatible",true)==Command::Observe);
+    }
+    assert(again.next("active",true)==Command::None);
+    assert(again.next("structurally_compatible",true)==Command::None); // budget used
 }

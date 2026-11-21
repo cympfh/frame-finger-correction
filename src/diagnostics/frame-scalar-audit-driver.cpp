@@ -1,3 +1,4 @@
+#include <iomanip>
 #include <limits>
 #include <pwd.h>
 #if defined(FRAME_COMPAT_OBSERVATION_UI) && (!defined(FRAME_COMPAT_STRUCTURAL_AUDIT) || !defined(FRAME_SCALAR_STANDALONE_BETA) || !defined(FRAME_SCALAR_ALL_FINGERS_BETA) || !defined(FRAME_SCALAR_OFF_VTABLE_PROBE))
@@ -119,6 +120,13 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
         if(!uiFresh||!pcOffFresh||!frame_settings::parse(text,profile))
 #endif
         {frame_off_probe::allFingers.off();return;}
+        // Optional "new 1" marks. Missing or invalid -> every mark stays 1.0,
+        // which is exactly the original deadzone mapping.
+        {
+            auto range=readBetaFile("beta-live-range.txt",4096);
+            frame_settings::Profile ranged=profile;
+            if(!range.empty()&&frame_settings::parseRange(range,ranged))profile=ranged;
+        }
         auto learn=readBetaFile("beta-learn.txt",160);std::istringstream input(learn);
         std::string tag,id,extra;int64_t stamp=0;int row=-1;auto wall=time(nullptr);
         if((input>>tag>>stamp>>id>>row)&&!(input>>extra)&&tag=="FRAME_BETA_LEARN_1"&&stamp>=0&&stamp<=wall&&wall-stamp<=2&&id.size()==16&&row>=0&&row<8&&id!=betaLearnId){
@@ -148,6 +156,11 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
         auto state=frame_off_probe::allFingers.status(now);
         std::ostringstream text;text<<"FRAME_BETA_STATUS_1 "<<time(nullptr)<<' '<<(state.on?"ON":"OFF")<<' '<<state.present<<' '<<state.witnessed<<' '<<state.learned<<'\n';
         writeBetaStatus(text.str());
+        // Tells the settings UI that this driver applies the "new 1" marks.
+        {
+            std::ostringstream range;range<<"FRAME_RANGE_STATUS_2 "<<time(nullptr)<<' '<<std::setprecision(3)<<frame_correction::rangeHighMax<<'\n';
+            writeBetaStatus(range.str(),"settings-ui/range-status.txt");
+        }
 #if defined(FRAME_COMPAT_OBSERVATION_UI) && defined(FRAME_SCALAR_OFF_VTABLE_PROBE)
         if(offProbe.restartRequired())writeBetaStatus("FRAME_COMPAT_STATUS_1 "+std::to_string(time(nullptr))+
             " restore_failed restart_required\n","settings-ui/compat-status.txt");
@@ -381,6 +394,7 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
     std::array<std::string,8> experimentalOwners{};
     uintptr_t experimentalTable=0, experimentalEntry=0, experimentalBackend=0;
     uint64_t experimentalUi=0;
+    unsigned reattachBudget=100;
 #endif
     void structuralCensus(frame_compat_check::Facts& f
 #ifdef FRAME_COMPAT_OBSERVATION_UI
@@ -510,6 +524,17 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
             if(logger)logger->Log(("FrameCompat: "+structuralStatus).c_str());
             std::lock_guard<std::mutex> guard(frame_off_probe::observationMutex);
             frame_off_probe::observation.restored(!offProbe.restartRequired(),false);
+            // The settings app applies correction only while it runs. After a confirmed
+            // restore (app closed, session ended) a later app session may attach again;
+            // it repeats every structural check. Unconfirmed restores and value/receiver
+            // anomalies still need a SteamVR restart.
+            if(!offProbe.restartRequired()&&frame_off_probe::observation.state()!=frame_observation::State::RestartRequired&&
+               reattachBudget>0&&(reason==Reason::None||reason==Reason::SessionLost||reason==Reason::Timeout||reason==Reason::IdentityChanged)){
+                --reattachBudget;
+                frame_off_probe::observation=frame_observation::Trial{};
+                structuralStatus="structurally_compatible none";
+                if(logger)logger->Log("FrameCompat: slot restored; a new settings session may attach again");
+            }
         }else{
             auto tick=frame_off_probe::observationMs();
             frame_off_probe::allFingers.configure(bindings,tick);

@@ -39,7 +39,7 @@ private:
  std::optional<LearningResult> learningResult; // control thread only
  template<class Finger>
  static frame_correction::DeadzoneSettings settingsFor(const Finger& finger){
-  frame_correction::DeadzoneSettings settings;settings.enabled=finger.selected;settings.manual=finger.threshold;
+  frame_correction::DeadzoneSettings settings;settings.enabled=finger.selected;settings.manual=finger.threshold;settings.high=finger.high;
   settings.mode=finger.dynamic?frame_correction::DeadzoneMode::Dynamic:frame_correction::DeadzoneMode::Manual;
   return settings;
  }
