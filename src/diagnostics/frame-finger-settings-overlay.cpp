@@ -363,10 +363,11 @@ int main(int argc,char** argv){
             if(false){}
 #ifdef FRAME_COMPAT_OBSERVATION_UI
             else if(compatVerdict=="active"){status=tr("Correction: ON","補正中");sr=.45;sg=.9;sb=.55;}
-            else if(compatVerdict=="waiting")status=tr("Waiting for the controllers (not correcting yet)","コントローラーの入力を待っています（まだ補正していません）");
+            else if(compatVerdict=="waiting")status=tr("Waiting for the controllers. Correction resumes by itself when they are back","コントローラーを待っています。つながると自動で補正を再開します");
             else if(compatVerdict=="observing"||compatVerdict=="verified"||compatVerdict=="structurally_compatible")
                 status=tr("Checking the input path (not correcting yet)","入力経路を確認中（まだ補正していません）");
-            else if(compatVerdict=="stopped"||compatVerdict=="rejected"||compatVerdict=="restore_failed"){
+            else if(compatVerdict=="stopped")status=tr("Correction paused; resuming automatically","補正を一時停止中。自動で再開します");
+            else if(compatVerdict=="rejected"||compatVerdict=="restore_failed"){
                 status=tr("Correction stopped. Restart SteamVR to use it again","補正は停止しました。もう一度使うにはSteamVRの再起動が必要です");sr=1;sg=.7;sb=.4;
                 if(!compatReason.empty())status+=" ("+compatReason+")";
             }

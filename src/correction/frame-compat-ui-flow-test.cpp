@@ -38,4 +38,16 @@ int main(){
     }
     assert(again.next("active",true)==Command::None);
     assert(again.next("structurally_compatible",true)==Command::None); // budget used
+    // Controller sleep: active -> restore -> waiting -> back -> attach again.
+    frame_compat_ui::Flow sleep;
+    assert(sleep.next("structurally_compatible",true)==Command::Observe);
+    assert(sleep.next("verified",true)==Command::Activate);
+    assert(sleep.next("active",true)==Command::None);
+    assert(sleep.next("structurally_compatible",true)==Command::Observe); // restored, offered again
+    assert(sleep.next("waiting",true)==Command::None);                    // finger missing
+    assert(sleep.next("waiting",true)==Command::None);
+    assert(sleep.next("structurally_compatible",true)==Command::Observe); // controllers back
+    assert(sleep.next("observing",true)==Command::None);
+    assert(sleep.next("verified",true)==Command::Activate);
+    assert(sleep.next("active",true)==Command::None);
 }

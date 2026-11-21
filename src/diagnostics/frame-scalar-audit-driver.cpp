@@ -63,6 +63,7 @@
 #error Structural audit needs the all-finger snapshot path filter
 #endif
 #include "runtime-facts.hpp"
+#include "../correction/frame-reattach-gate.hpp"
 #endif
 
 namespace frame_scalar_audit {
@@ -395,6 +396,7 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
     uintptr_t experimentalTable=0, experimentalEntry=0, experimentalBackend=0;
     uint64_t experimentalUi=0;
     unsigned reattachBudget=100;
+    frame_reattach::Gate reattach;bool cvUnavailable=false;
 #endif
     void structuralCensus(frame_compat_check::Facts& f
 #ifdef FRAME_COMPAT_OBSERVATION_UI
@@ -449,27 +451,44 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
         const bool stop=requested("observe-stop.txt");
         auto log=[this](const char* message){logger->Log(message);};
         if(!offProbe.active()){
-            if(structuralStatus!="structurally_compatible none"||!start)return;
-            const auto hashes=frame_runtime_facts::hashRuntime();
+            // Pre-attach checks, repeated on every attempt. Read-only.
             frame_compat_check::Facts facts;
-            frame_runtime_facts::readStructure(structuralInput,facts);
-            if(!frame_compat_check::sha256Text(hashes.cv)||!std::any_of(facts.maps.begin(),facts.maps.end(),[](const auto& mapping){
-                return mapping.path==frame_runtime_facts::cvPath&&mapping.exec&&!mapping.write;
-            })){
-                structuralStatus="rejected cv_mapping_unavailable";
-                return;
-            }
-            facts.selfSha256=hashes.self;facts.serverSha256=hashes.server;facts.cvSha256=hashes.cv;
-            frame_compat_check::Result vouched;
-            if(auto reason=frame_compat_check::structuralCheck(facts,vouched);reason!=frame_compat_check::Reason::None){
-                structuralStatus=std::string("rejected ")+frame_compat_check::reasonName(reason);
-                return;
-            }
             std::array<std::optional<frame_beta::Binding>,8> initialBindings{};
-            structuralCensus(facts,&experimentalHandles,&experimentalOwners,&initialBindings);
-            const auto verdict=frame_compat_check::classify(facts,frame_runtime_facts::shippedProfiles());
-            if(verdict.verdict!=frame_compat_check::Verdict::StructurallyCompatible){
-                structuralStatus=std::string("rejected ")+frame_compat_check::reasonName(verdict.reason);
+            auto preAttach=[&]()->frame_compat_check::Reason{
+                const auto hashes=frame_runtime_facts::hashRuntime();
+                frame_runtime_facts::readStructure(structuralInput,facts);
+                if(!frame_compat_check::sha256Text(hashes.cv)||!std::any_of(facts.maps.begin(),facts.maps.end(),[](const auto& mapping){
+                    return mapping.path==frame_runtime_facts::cvPath&&mapping.exec&&!mapping.write;
+                })){cvUnavailable=true;return frame_compat_check::Reason::InterfaceMissing;} // reported as cv_mapping_unavailable
+                facts.selfSha256=hashes.self;facts.serverSha256=hashes.server;facts.cvSha256=hashes.cv;
+                frame_compat_check::Result vouched;
+                if(auto reason=frame_compat_check::structuralCheck(facts,vouched);reason!=frame_compat_check::Reason::None)return reason;
+                structuralCensus(facts,&experimentalHandles,&experimentalOwners,&initialBindings);
+                const auto verdict=frame_compat_check::classify(facts,frame_runtime_facts::shippedProfiles());
+                if(verdict.verdict!=frame_compat_check::Verdict::StructurallyCompatible)
+                    return verdict.reason==frame_compat_check::Reason::None?frame_compat_check::Reason::KnownHashLayoutMismatch:verdict.reason;
+                return frame_compat_check::Reason::None;
+            };
+            auto statusFor=[&](frame_compat_check::Reason reason){
+                auto line=reattach.checked(reason,now);
+                if(line=="rejected interface_missing"&&cvUnavailable)line="rejected cv_mapping_unavailable";
+                return line;
+            };
+            if(reattach.waiting()){
+                // Controllers were missing/settling: re-check, never attach from here.
+                if(!reattach.retryDue(now))return;
+                cvUnavailable=false;
+                auto reason=preAttach();
+                const auto previous=structuralStatus;
+                structuralStatus=statusFor(reason);
+                if(structuralStatus!=previous&&logger)logger->Log(("FrameCompat: re-check after restore: "+structuralStatus).c_str());
+                return;
+            }
+            if(structuralStatus!="structurally_compatible none"||!start)return;
+            cvUnavailable=false;
+            if(auto reason=preAttach();reason!=frame_compat_check::Reason::None){
+                structuralStatus=statusFor(reason);
+                if(logger)logger->Log(("FrameCompat: attach check: "+structuralStatus).c_str());
                 return;
             }
             const auto latestHeartbeat=readBetaFile("ui-heartbeat.txt",160);
@@ -529,7 +548,7 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
             // it repeats every structural check. Unconfirmed restores and value/receiver
             // anomalies still need a SteamVR restart.
             if(!offProbe.restartRequired()&&frame_off_probe::observation.state()!=frame_observation::State::RestartRequired&&
-               reattachBudget>0&&(reason==Reason::None||reason==Reason::SessionLost||reason==Reason::Timeout||reason==Reason::IdentityChanged)){
+               reattachBudget>0&&frame_reattach::mayReattach(reason)){
                 --reattachBudget;
                 frame_off_probe::observation=frame_observation::Trial{};
                 structuralStatus="structurally_compatible none";
