@@ -122,7 +122,8 @@ public:
   return renew(profile,revision,verifiedRuntime,uiStamp,0,now,learning,learnUntil,Authority::FrameOnly);
  }
  std::optional<LearningResult> takeLearningResult(){auto result=learningResult;learningResult.reset();return result;}
- struct Status {unsigned present=0,witnessed=0,learned=0;bool on=false;uint64_t changed=0;};
+ // low[i]: effective "new 0" of a learned DYNAMIC finger, -1 when not known.
+ struct Status {unsigned present=0,witnessed=0,learned=0;bool on=false;uint64_t changed=0;std::array<double,8> low{-1,-1,-1,-1,-1,-1,-1,-1};};
  Status status(uint64_t now){
   Status out;out.changed=changedCalls.load();auto c=std::atomic_load(&control);
   out.on=c&&c->on&&now>=c->issued&&now<c->until;
@@ -130,7 +131,11 @@ public:
   for(unsigned i=0;i<8;++i){auto r=(*set)[i];if(!r||!r->enabled.load()||now>=r->metadataUntil.load())continue;
    out.present|=1u<<i;if(r->receiver.load()&&!r->ambiguous.load())out.witnessed|=1u<<i;
    std::unique_lock<std::mutex> lock(r->samples,std::try_to_lock);
-   if(lock.owns_lock()&&c&&r->settingsRevision==c->revision&&r->zone.ready())out.learned|=1u<<i;
+   if(lock.owns_lock()&&c&&r->settingsRevision==c->revision&&r->zone.ready()){
+    out.learned|=1u<<i;auto settings=settingsFor(c->profile.fingers[i]);
+    if(settings.mode==frame_correction::DeadzoneMode::Dynamic&&frame_correction::validHigh(settings.high))
+     out.low[i]=frame_correction::effectiveLow(r->zone.threshold(settings),settings.high);
+   }
   }return out;
  }
  int32_t forward(frame_scalar::ScalarUpdate original,void* receiver,uint64_t component,float input,double offset,uint64_t now,bool allowCorrection=true){

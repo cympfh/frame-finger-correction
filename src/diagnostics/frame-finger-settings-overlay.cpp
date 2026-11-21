@@ -103,12 +103,13 @@ std::string localized(std::string_view label){
         {"Could not save language preference.","表示言語を保存できませんでした。"},
         {"Language: 日本語 / English","言語：日本語 / English"},
         {"Deadzone: ","デッドゾーン："},
-        {"ALL 8 FINGERS / DEADZONE + RANGE (new 0 / new 1) / No firmware changes","左右8指：デッドゾーンと範囲補正（新しい0・新しい1）"},
-        {"new 0: ","新しい0："},
-        {"new 1: ","新しい1："},
-        {"Drag the marks on each line: left = new 0, right = new 1 (lower new 1 = curls more easily).","線の上の印をドラッグ：左が新しい0、右が新しい1（新しい1を下げるほど曲がりやすい）"},
-        {"Range (new 1) active in driver","範囲補正（新しい1）：ドライバーで有効"},
-        {"new 1 needs the updated driver: restart SteamVR to load it","新しい1は更新版ドライバーの読み込み（SteamVR再起動）後に効きます"},
+        {"ALL 8 FINGERS / DEADZONE + RANGE (mark 0 / mark 1) / No firmware changes","左右8指：デッドゾーンと範囲補正（0の印・1の印）"},
+        {"mark 0: ","0の印："},
+        {" (learned)","（学習値）"},
+        {"mark 1: ","1の印："},
+        {"Drag the marks on each line: left = mark 0, right = mark 1 (lower mark 1 = curls more easily).","線の上の印をドラッグ：左が0の印、右が1の印（1の印を下げるほど曲がりやすい）"},
+        {"Range (mark 1) active in driver","範囲補正（1の印）：ドライバーで有効"},
+        {"Mark 1 needs the updated driver: restart SteamVR to load it","1の印は更新版ドライバーの読み込み（SteamVR再起動）後に効きます"},
     };
     for(const auto& [en,ja]:labels)if(label==en)return std::string(ja);
     return std::string(label);
@@ -175,8 +176,8 @@ bool writeHeartbeat(const std::string& directory,uint64_t session,uint64_t seque
     if(!ok)unlink(name.data());
     return ok;
 }
-// "new 0" is the existing deadzone (profile v1, still readable by older
-// releases); "new 1" lives in a separate range file read by newer drivers.
+// Mark 0 is the existing deadzone (profile v1, still readable by older
+// releases); mark 1 lives in a separate range file read by newer drivers.
 bool saveLive(const std::string& directory,const frame_settings::Profile& profile){
     bool live=frame_settings::saveFile(directory+"/beta-live-profile.txt",profile);
     bool range=frame_settings::saveRangeFile(directory+"/beta-live-range.txt",profile);
@@ -194,9 +195,12 @@ double sliderValue(const Slider& slider,double x){
     double value=(x-slider.x)/slider.w*sliderMax;
     return std::round(std::clamp(value,0.0,sliderMax)*100)/100;
 }
-// Mark limits: new 0 in 0..0.9 (as before), new 1 in 0.1..2.0, gap >= 0.05.
+// Mark limits: mark 0 in 0..0.9 (as before), mark 1 in 0.1..2.0, gap >= 0.05.
 void setLow(frame_settings::Finger& finger,double value){finger.threshold=std::clamp(value,0.0,std::min(.9,finger.high-.05));}
-void setHigh(frame_settings::Finger& finger,double value){finger.high=std::clamp(value,std::max(.1,finger.threshold+.05),2.0);}
+// low is the effective 0 mark (learned value for a learned DYNAMIC finger).
+void setHigh(frame_settings::Finger& finger,double value,double low){
+    finger.high=std::clamp(value,std::max(frame_correction::rangeHighMin,std::min(low,.95)+frame_correction::rangeMinGap),frame_correction::rangeHighMax);
+}
 }
 int main(int argc,char** argv){
     bool startOff=false;
@@ -220,7 +224,7 @@ int main(int argc,char** argv){
         std::cout<<"SettingsUI: saved profile loaded; live correction OFF\n"<<std::flush;
     }
     if(!frame_settings::loadRangeFile(directory+"/range-preferences.txt",profile))
-        std::cerr<<"Invalid range file; new 1 marks reset to 1.0\n";
+        std::cerr<<"Invalid range file; mark 1 reset to 1.0\n";
     for(auto& finger:profile.fingers)setLow(finger,finger.threshold);
 #ifdef FRAME_UI_ALL_FINGERS_BETA
     if(startOff)profile.requested=false;
@@ -255,7 +259,9 @@ int main(int argc,char** argv){
 #endif
     cairo_select_font_face(cleanup.cr,"Noto Sans CJK JP",CAIRO_FONT_SLANT_NORMAL,CAIRO_FONT_WEIGHT_NORMAL);
     std::vector<uint8_t> rgba(width*height*4);std::vector<Button> buttons;
-    std::vector<Slider> sliders;int dragRow=-1;bool dragHigh=false,rangeDriver=false;int64_t rangePolled=-1;
+    std::vector<Slider> sliders;int dragRow=-1;bool dragHigh=false,rangeDriver=false,liveDirty=false;int64_t rangePolled=-1;
+    Slider dragSlider{};std::array<double,8> effectiveLows{-1,-1,-1,-1,-1,-1,-1,-1};
+    auto lastLive=std::chrono::steady_clock::now();
     bool dirty=true,iconReady=false;std::string message="Preferences do not start correction. Trial requires the guarded broker.";
 #ifdef FRAME_UI_ALL_FINGERS_BETA
     message="Changes apply immediately. The previous ON/OFF setting is restored at startup.";
@@ -275,6 +281,26 @@ int main(int argc,char** argv){
     std::signal(SIGINT,stop);std::signal(SIGTERM,stop);auto start=std::chrono::steady_clock::now();
     uint64_t heartbeatSession=static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(start.time_since_epoch()).count());
     uint64_t heartbeatSequence=0,profileRevision=1;auto nextHeartbeat=start;
+    auto learnedLow=[&](unsigned row){return profile.fingers[row].dynamic&&effectiveLows[row]>=0;};
+    auto shownLow=[&](unsigned row){return learnedLow(row)?effectiveLows[row]:profile.fingers[row].threshold;};
+    // Only a changed 0 mark or selection bumps the revision; the driver resets
+    // learned DYNAMIC values on a revision change, so moving the 1 mark must not.
+    auto applyDrag=[&](double value){
+        auto row=static_cast<unsigned>(dragRow);auto& finger=profile.fingers[row];
+        const bool wasSelected=finger.selected;const double low=finger.threshold,high=finger.high;
+        if(dragHigh)setHigh(finger,value,shownLow(row));else setLow(finger,value);
+        if(finger.threshold==low&&finger.high==high)return;
+        finger.selected=true;
+        if(!wasSelected||finger.threshold!=low)++profileRevision;
+        liveDirty=true;dirty=true;
+    };
+    auto finishDrag=[&](){
+        bool applied=true;
+        if(liveDirty){applied=saveLive(directory,profile);liveDirty=false;lastLive=std::chrono::steady_clock::now();}
+        bool saved=savePreferences(path,directory,profile);
+        message=applied&&saved?"Applied and saved. Extend a finger before clicking LEARN.":"Apply/save failed; check application status.";
+        dragRow=-1;dirty=true;
+    };
     const char* fingers[]{"INDEX","MIDDLE","RING","PINKY"};
     while(running&&(duration==0||std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count()<duration)){
         auto heartbeatNow=std::chrono::steady_clock::now();
@@ -323,9 +349,9 @@ int main(int argc,char** argv){
 #endif
             if(time(nullptr)!=rangePolled){
                 rangePolled=time(nullptr);
-                std::ifstream rangeFile(directory+"/range-status.txt");std::string tag;int64_t stamp=-1;
-                bool fresh=(rangeFile>>tag>>stamp)&&tag=="FRAME_RANGE_STATUS_1"&&stamp<=rangePolled&&rangePolled-stamp<=3;
-                if(fresh!=rangeDriver){rangeDriver=fresh;dirty=true;}
+                std::ifstream rangeFile(directory+"/range-status.txt");char body[257]{};rangeFile.read(body,sizeof(body));
+                auto range=frame_beta::parseRangeStatus(std::string(body,static_cast<size_t>(rangeFile.gcount())),rangePolled);
+                if(range.valid!=rangeDriver||range.low!=effectiveLows){rangeDriver=range.valid;effectiveLows=range.low;dirty=true;}
             }
             std::ifstream input(directory+"/beta-status.txt");std::string content((std::istreambuf_iterator<char>(input)),{});
             auto latest=frame_beta::parseUiStatus(content,time(nullptr));
@@ -368,38 +394,32 @@ int main(int argc,char** argv){
             if(event.eventType==vr::VREvent_Quit){running=0;continue;}
             {
                 // Slider drag: press near a line grabs the nearest mark, move drags it,
-                // release applies and saves (the live file is also updated while dragging).
-                const double sx=event.data.mouse.x,sy=height-event.data.mouse.y;
-                bool handled=false;
-                if(event.eventType==vr::VREvent_MouseButtonDown&&event.data.mouse.button==vr::VRMouseButton_Left){
-                    for(const auto& slider:sliders)if(sx>=slider.x-15&&sx<slider.x+slider.w+15&&sy>=slider.y&&sy<slider.y+slider.h){
-                        auto& finger=profile.fingers[slider.row];double value=sliderValue(slider,sx);
-                        dragRow=static_cast<int>(slider.row);
-                        dragHigh=std::abs(value-finger.high)<std::abs(value-finger.threshold)||(value>finger.high);
-                        handled=true;break;
-                    }
-                }
-                if(dragRow>=0&&(handled||event.eventType==vr::VREvent_MouseMove||event.eventType==vr::VREvent_MouseButtonUp)){
-                    for(const auto& slider:sliders)if(static_cast<int>(slider.row)==dragRow){
-                        auto& finger=profile.fingers[slider.row];double value=sliderValue(slider,sx);
-                        double before=dragHigh?finger.high:finger.threshold;
-                        if(dragHigh)setHigh(finger,value);else setLow(finger,value);
-                        double after=dragHigh?finger.high:finger.threshold;
-                        bool release=event.eventType==vr::VREvent_MouseButtonUp;
-                        if(after!=before||release){
-                            finger.selected=true;++profileRevision;
-                            bool applied=saveLive(directory,profile);
-                            if(release){
-                                bool saved=savePreferences(path,directory,profile);
-                                message=applied&&saved?"Applied and saved. Extend a finger before clicking LEARN.":"Apply/save failed; check application status.";
-                            }
-                            dirty=true;
-                        }
-                        break;
-                    }
-                    if(event.eventType==vr::VREvent_MouseButtonUp)dragRow=-1;
+                // left release (or focus loss) applies and saves. While dragging the
+                // live file is written at most every 100 ms.
+                if(event.eventType==vr::VREvent_FocusLeave||event.eventType==vr::VREvent_DashboardDeactivated){
+                    if(dragRow>=0)finishDrag();
                     continue;
                 }
+                const bool mouse=event.eventType==vr::VREvent_MouseButtonDown||event.eventType==vr::VREvent_MouseMove||event.eventType==vr::VREvent_MouseButtonUp;
+                const double sx=mouse?event.data.mouse.x:0,sy=mouse?height-event.data.mouse.y:0;
+                const bool leftDown=event.eventType==vr::VREvent_MouseButtonDown&&event.data.mouse.button==vr::VRMouseButton_Left;
+                const bool leftUp=event.eventType==vr::VREvent_MouseButtonUp&&event.data.mouse.button==vr::VRMouseButton_Left;
+                if(leftDown&&dragRow<0){
+                    for(const auto& slider:sliders)if(sx>=slider.x-15&&sx<slider.x+slider.w+15&&sy>=slider.y&&sy<slider.y+slider.h){
+                        const auto& finger=profile.fingers[slider.row];double value=sliderValue(slider,sx);
+                        dragRow=static_cast<int>(slider.row);dragSlider=slider;
+                        // A learned DYNAMIC finger has no manual 0 mark to drag.
+                        dragHigh=learnedLow(slider.row)||std::abs(value-finger.high)<std::abs(value-finger.threshold)||value>finger.high;
+                        applyDrag(value);break;
+                    }
+                    if(dragRow>=0)continue;
+                }
+                if(dragRow>=0&&(event.eventType==vr::VREvent_MouseMove||leftUp)){
+                    applyDrag(sliderValue(dragSlider,sx));
+                    if(leftUp)finishDrag();
+                    continue;
+                }
+                if(dragRow>=0&&event.eventType==vr::VREvent_MouseButtonUp)continue; // other buttons while dragging
             }
             if(event.eventType!=vr::VREvent_MouseButtonUp||event.data.mouse.button!=vr::VRMouseButton_Left)continue;
             double x=event.data.mouse.x,y=height-event.data.mouse.y;
@@ -423,9 +443,9 @@ int main(int argc,char** argv){
                     dirty=true;break;
                 }
                 if(action>=300&&action<316){
-                    auto& finger=profile.fingers[(action-300)/2];
-                    setHigh(finger,finger.high+((action-300)%2?.05:-.05));finger.selected=true;
-                    ++profileRevision;
+                    const auto row=static_cast<unsigned>(action-300)/2;auto& finger=profile.fingers[row];
+                    if(!finger.selected){finger.selected=true;++profileRevision;} // 1 mark alone keeps learned values
+                    setHigh(finger,finger.high+((action-300)%2?.05:-.05),shownLow(row));
                     bool applied=saveLive(directory,profile),saved=savePreferences(path,directory,profile);
                     message=applied&&saved?"Applied and saved. Extend a finger before clicking LEARN.":"Apply/save failed; check application status.";
                     dirty=true;break;
@@ -465,11 +485,15 @@ int main(int argc,char** argv){
                 message="Unsaved settings. Trial state is shown separately.";dirty=true;break;
             }
         }
+        if(liveDirty&&std::chrono::steady_clock::now()-lastLive>=std::chrono::milliseconds(100)){
+            if(!saveLive(directory,profile))message="Apply/save failed; check application status.";
+            liveDirty=false;lastLive=std::chrono::steady_clock::now();dirty=true;
+        }
         if(dirty){
             auto cr=cleanup.cr;cairo_set_source_rgb(cr,.045,.065,.09);cairo_paint(cr);buttons.clear();sliders.clear();
             text(cr,25,45,30,"STEAM FRAME - FINGER SETTINGS");
             #ifdef FRAME_UI_ALL_FINGERS_BETA
-            text(cr,25,80,20,"ALL 8 FINGERS / DEADZONE + RANGE (new 0 / new 1) / No firmware changes");
+            text(cr,25,80,20,"ALL 8 FINGERS / DEADZONE + RANGE (mark 0 / mark 1) / No firmware changes");
 #else
             text(cr,25,80,20,"Bounded trial only / Other fingers: preferences only / No firmware changes");
 #endif
@@ -479,15 +503,15 @@ int main(int argc,char** argv){
                 cairo_set_source_rgb(cr,disabled?.12:.11,disabled?.13:.22,disabled?.14:.30);cairo_rectangle(cr,x,y,w,48);cairo_fill(cr);text(cr,x+10,y+31,18,label);
             };
 #ifdef FRAME_UI_ALL_FINGERS_BETA
-            text(cr,25,103,15,"Drag the marks on each line: left = new 0, right = new 1 (lower new 1 = curls more easily).");
-            text(cr,700,45,15,rangeDriver?"Range (new 1) active in driver":"new 1 needs the updated driver: restart SteamVR to load it");
+            text(cr,25,103,15,"Drag the marks on each line: left = mark 0, right = mark 1 (lower mark 1 = curls more easily).");
+            text(cr,700,45,15,rangeDriver?"Range (mark 1) active in driver":"Mark 1 needs the updated driver: restart SteamVR to load it");
 #endif
             for(unsigned side=0;side<2;++side){
                 double x=25+side*590;text(cr,x,130,25,side?"RIGHT":"LEFT");
                 for(unsigned finger=0;finger<4;++finger){
                     unsigned row=side*4+finger;auto& entry=profile.fingers[row];double y=150+finger*155;
-                    std::ostringstream value,high;value<<std::fixed<<std::setprecision(2)<<entry.threshold;high<<std::fixed<<std::setprecision(2)<<entry.high;
-                    text(cr,x,y+20,21,localized(fingers[finger])+"  "+localized("new 0: ")+value.str()+"  "+localized("new 1: ")+high.str());
+                    std::ostringstream value,high;value<<std::fixed<<std::setprecision(2)<<shownLow(row)<<(learnedLow(row)?localized(" (learned)"):"");high<<std::fixed<<std::setprecision(2)<<entry.high;
+                    text(cr,x,y+20,21,localized(fingers[finger])+"  "+localized("mark 0: ")+value.str()+"  "+localized("mark 1: ")+high.str());
                     {
                         // Line 0..2 with the 0..1 part highlighted, ticks at 0/1/2, two marks.
                         const double lx=x+10,ly=y+112,lw=sliderWidth;
@@ -498,7 +522,7 @@ int main(int argc,char** argv){
                         cairo_set_line_width(cr,2);
                         for(int tick=0;tick<=2;++tick){double tx=lx+lw*tick/2;cairo_move_to(cr,tx,ly-9);cairo_line_to(cr,tx,ly+9);cairo_stroke(cr);
                             text(cr,tx-5,ly+26,13,std::to_string(tick));}
-                        const double a=lx+lw*entry.threshold/sliderMax,b=lx+lw*entry.high/sliderMax;
+                        const double a=lx+lw*frame_correction::effectiveLow(shownLow(row),entry.high)/sliderMax,b=lx+lw*entry.high/sliderMax;
                         cairo_set_source_rgba(cr,.25,.65,1,.35);cairo_rectangle(cr,a,ly-5,b-a,10);cairo_fill(cr);
                         auto mark=[&](double mx,double r,double g,double bl,const char* label){
                             cairo_set_source_rgb(cr,r,g,bl);cairo_move_to(cr,mx,ly-4);cairo_line_to(cr,mx-9,ly-20);cairo_line_to(cr,mx+9,ly-20);cairo_close_path(cr);cairo_fill(cr);

@@ -1,4 +1,6 @@
 #pragma once
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <sstream>
 #include <string>
@@ -10,6 +12,18 @@ inline UiStatus parseUiStatus(const std::string& text,int64_t now){
     tag!="FRAME_BETA_STATUS_1"||(state!="ON"&&state!="OFF")||stamp<0||stamp>now||now-stamp>2||
     out.present>255||out.witnessed>255||out.learned>255)return {};
  out.valid=true;out.on=state=="ON";return out;
+}
+// Written by a driver that applies the "new 1" marks. low[i] is the effective
+// "new 0" of a learned DYNAMIC finger, or -1 when unknown.
+struct RangeStatus {bool valid=false;std::array<double,8> low{-1,-1,-1,-1,-1,-1,-1,-1};};
+inline RangeStatus parseRangeStatus(const std::string& text,int64_t now){
+ RangeStatus out;std::istringstream input(text);std::string tag,extra;int64_t stamp=0;
+ if(text.size()>256||!(input>>tag>>stamp)||tag!="FRAME_RANGE_STATUS_1"||stamp<0||stamp>now||now-stamp>3)return {};
+ for(auto& value:out.low){
+  if(!(input>>value)||!std::isfinite(value)||(value!=-1&&(value<0||value>1)))return {};
+ }
+ if(input>>extra)return {};
+ out.valid=true;return out;
 }
 enum class LearnOutcome { Invalid, Applied, Insufficient };
 inline LearnOutcome parseLearnResult(const std::string& body,const std::string& expected,int64_t now){

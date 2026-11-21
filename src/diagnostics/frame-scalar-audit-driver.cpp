@@ -1,3 +1,4 @@
+#include <iomanip>
 #include <limits>
 #include <pwd.h>
 #if defined(FRAME_COMPAT_OBSERVATION_UI) && (!defined(FRAME_COMPAT_STRUCTURAL_AUDIT) || !defined(FRAME_SCALAR_STANDALONE_BETA) || !defined(FRAME_SCALAR_ALL_FINGERS_BETA) || !defined(FRAME_SCALAR_OFF_VTABLE_PROBE))
@@ -156,7 +157,11 @@ class Provider final:public vr::IServerTrackedDeviceProvider {
         std::ostringstream text;text<<"FRAME_BETA_STATUS_1 "<<time(nullptr)<<' '<<(state.on?"ON":"OFF")<<' '<<state.present<<' '<<state.witnessed<<' '<<state.learned<<'\n';
         writeBetaStatus(text.str());
         // Tells the settings UI that this driver applies the "new 1" marks.
-        writeBetaStatus("FRAME_RANGE_STATUS_1 "+std::to_string(time(nullptr))+"\n","settings-ui/range-status.txt");
+        {
+            std::ostringstream range;range<<"FRAME_RANGE_STATUS_1 "<<time(nullptr)<<std::fixed<<std::setprecision(4);
+            for(double low:state.low)if(low<0)range<<" -1";else range<<' '<<low;
+            range<<'\n';writeBetaStatus(range.str(),"settings-ui/range-status.txt");
+        }
 #if defined(FRAME_COMPAT_OBSERVATION_UI) && defined(FRAME_SCALAR_OFF_VTABLE_PROBE)
         if(offProbe.restartRequired())writeBetaStatus("FRAME_COMPAT_STATUS_1 "+std::to_string(time(nullptr))+
             " restore_failed restart_required\n","settings-ui/compat-status.txt");

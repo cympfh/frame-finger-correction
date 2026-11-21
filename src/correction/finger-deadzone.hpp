@@ -12,13 +12,15 @@ namespace frame_correction {
 // is not verified to be accepted by SteamVR or applications.
 inline constexpr double rangeMinGap=0.05,rangeHighMin=0.1,rangeHighMax=2.0;
 inline bool validHigh(double high){return std::isfinite(high)&&high>=rangeHighMin&&high<=rangeHighMax;}
-// Unclamped math, for documentation and tests only. Requires high>low.
+// Unclamped two-mark math (can exceed 1 above high). Requires high>low.
 inline double remapRangeRaw(double input,double low,double high){return (input-low)/(high-low);}
 // Value that may be written to SteamVR. The low mark is pulled below high so
 // the denominator is never smaller than rangeMinGap.
+// The low mark actually used for a given high (shared by the UI display).
+inline double effectiveLow(double low,double high){return std::clamp(low,0.0,high-rangeMinGap);}
 inline double remapRange(double input,double low,double high){
     if(!std::isfinite(input)||!std::isfinite(low)||!validHigh(high))return input;
-    low=std::clamp(low,0.0,high-rangeMinGap);
+    low=effectiveLow(low,high);
     return std::clamp(remapRangeRaw(input,low,high),0.0,1.0);
 }
 enum class DeadzoneMode { Manual, Dynamic };

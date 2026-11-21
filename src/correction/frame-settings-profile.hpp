@@ -1,4 +1,5 @@
 #pragma once
+#include "finger-deadzone.hpp"
 #include <array>
 #include <cmath>
 #include <iomanip>
@@ -9,7 +10,7 @@ namespace frame_settings {
 // stored separately (FRAME_FINGER_RANGE_1) so the v1 profile stays readable by
 // older releases.
 struct Finger {bool selected=false,dynamic=false;double threshold=.2,high=1.0;};
-inline bool validRangeHigh(double high){return std::isfinite(high)&&high>=.1&&high<=2.0;}
+inline bool validRangeHigh(double high){return frame_correction::validHigh(high);}
 struct Profile {bool requested=false;std::array<Finger,8> fingers{};};
 inline bool parse(const std::string& text,Profile& result){
     if(text.size()>4096)return false;
