@@ -50,4 +50,26 @@ int main(){
     assert(sleep.next("observing",true)==Command::None);
     assert(sleep.next("verified",true)==Command::Activate);
     assert(sleep.next("active",true)==Command::None);
+    // Whole Frame suspended while active (observed 2026-11-22 13:17 -> 22:08):
+    // after resume the app first reads a stale (empty) status, then the
+    // driver's fresh offer. It must still attach again.
+    frame_compat_ui::Flow suspend;
+    assert(suspend.next("structurally_compatible",true)==Command::Observe);
+    assert(suspend.next("verified",true)==Command::Activate);
+    assert(suspend.next("active",true)==Command::None);
+    assert(suspend.next("",true)==Command::None);                           // stale file after resume
+    assert(suspend.next("",true)==Command::None);
+    assert(suspend.next("structurally_compatible",true)==Command::Observe); // offered again
+    assert(suspend.next("verified",true)==Command::Activate);
+    // A request the driver never took up is sent again after a few polls.
+    frame_compat_ui::Flow lost;
+    assert(lost.next("structurally_compatible",true)==Command::Observe);
+    assert(lost.next("structurally_compatible",true)==Command::None);
+    assert(lost.next("structurally_compatible",true)==Command::None);
+    assert(lost.next("structurally_compatible",true)==Command::Observe);   // re-sent
+    assert(lost.next("observing",true)==Command::None);
+    // Final states still never re-arm.
+    frame_compat_ui::Flow final;
+    assert(final.next("structurally_compatible",true)==Command::Observe);
+    for(int i=0;i<10;++i)assert(final.next("rejected",true)==Command::None);
 }
